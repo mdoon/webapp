@@ -5,7 +5,6 @@ import pandas as pd
 import datetime
 import os
 import matplotlib.pyplot as plt
-import japanize_matplotlib
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.neural_network import MLPRegressor
 
@@ -160,7 +159,16 @@ with tab2:
                 c3.metric("予測騰落率", f"{future_change:+.2f}%")
 
                 # グラフ（日本語対応）
+               # グラフ表示の部分
                 st.subheader(f"【{ticker_input}】 実績とAI予測の推移")
+                
+                # フォントを明示的に指定（Streamlit Cloud環境用）
+                plt.rcParams['font.family'] = 'sans-serif'
+                plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Liberation Sans', 'Ubuntu', 'NanumGothic', 'Arial'] 
+                
+                # もし上記でも化ける場合は、日本語対応フォントを直接指定
+                # plt.rcParams['font.family'] = 'Noto Sans CJK JP' 
+
                 fig, ax = plt.subplots(figsize=(10, 4.5))
                 ax.plot(df.index, df.iloc[:, 0], label="実績株価", color="#1f77b4", linewidth=2)
                 ax.plot(forecast_df.index, forecast_df["Forecast"], label="AI予測値", color="#ff7f0e", linestyle="--", linewidth=2)

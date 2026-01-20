@@ -169,12 +169,13 @@ with tab2:
                 # もし上記でも化ける場合は、日本語対応フォントを直接指定
                 # plt.rcParams['font.family'] = 'Noto Sans CJK JP' 
 
+# グラフの描画
                 fig, ax = plt.subplots(figsize=(10, 4.5))
-                ax.plot(df.index, df.iloc[:, 0], label="実績株価", color="#1f77b4", linewidth=2)
-                ax.plot(forecast_df.index, forecast_df["Forecast"], label="AI予測値", color="#ff7f0e", linestyle="--", linewidth=2)
+                ax.plot(df.index, df.iloc[:, 0], label="Actual Price", color="#1f77b4", linewidth=2)
+                ax.plot(forecast_df.index, forecast_df["Forecast"], label="AI Forecast", color="#ff7f0e", linestyle="--", linewidth=2)
                 
-                ax.set_xlabel("日付")
-                ax.set_ylabel("株価 (円)")
+                ax.set_xlabel("Date")
+                ax.set_ylabel("Price (JPY)")
                 ax.legend()
                 ax.grid(True, alpha=0.3)
                 st.pyplot(fig)

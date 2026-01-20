@@ -5,141 +5,170 @@ import pandas as pd
 import datetime
 import os
 import matplotlib.pyplot as plt
+import japanize_matplotlib
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.neural_network import MLPRegressor
 
-# ページ設定
-st.set_page_config(page_title="株価分析＆AI予測ツール", layout="wide")
+# ページ設定（結果を見やすくするためワイドモードに設定）
+st.set_page_config(page_title="株価予測・分析ツール", layout="wide")
 
-# --- 共通関数：データ取得 ---
-def get_stock_raw_data(ticker, current_date):
-    start_date = current_date - datetime.timedelta(days=365)
+# ==========================================
+# 1. 一括計算用ロジック（幾何平均）
+# ==========================================
+def get_stock_data_stats(ticker, current_date):
+    end_date = current_date
+    start_date = end_date - datetime.timedelta(days=365)
     try:
-        data = yf.download(ticker, start=start_date, end=current_date, progress=False)
-        if data.empty: return None
-        # マルチインデックス対策
-        if isinstance(data.columns, pd.MultiIndex):
-            data = data.xs("Close", level=0, axis=1)
+        stock_data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+        if len(stock_data) < 2:
+            return None
+        
+        # Closeデータの抽出
+        if isinstance(stock_data.columns, pd.MultiIndex):
+            price_series = stock_data['Close'][ticker]
         else:
-            data = data[["Close"]]
-        return data
+            price_series = stock_data['Close']
+
+        price_start = float(price_series.iloc[0])
+        price_end = float(price_series.iloc[-1])
+
+        # 幾何平均計算
+        geometric_mean = np.sqrt(price_start * price_end)
+        expected_profit = price_end - geometric_mean
+        expected_price = price_end + expected_profit
+        expected_interest_rate = 1 + (expected_profit / price_end)
+
+        return {
+            "始値（1年前）": round(price_start, 1),
+            "終値（現在）": round(price_end, 1),
+            "1年後の想定価格": round(expected_price, 1),
+            "想定倍率": round(expected_interest_rate, 3)
+        }
     except:
         return None
 
-# --- AI予測ロジック：MLPモデル ---
+# ==========================================
+# 2. AI予測用ロジック（MLP）
+# ==========================================
+def get_stock_raw_data(ticker, current_date):
+    start_date = current_date - datetime.timedelta(days=365)
+    data = yf.download(ticker, start=start_date, end=current_date, progress=False)
+    if isinstance(data.columns, pd.MultiIndex):
+        data = data.xs("Close", level=0, axis=1)
+    else:
+        data = data[["Close"]]
+    return data
+
 def forecast_mlp(df, window=30, steps=60):
     target = df.iloc[:, 0].values.reshape(-1, 1)
-    
-    # 正規化
     scaler = MinMaxScaler()
     scaled = scaler.fit_transform(target)
     
-    # 学習データ作成
     X, y = [], []
     for i in range(len(scaled) - window):
         X.append(scaled[i:i+window].flatten())
         y.append(scaled[i+window])
-    
+
     X, y = np.array(X), np.array(y).ravel()
-    
-    # MLPモデル構築・学習
     model = MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=2000, random_state=0)
     model.fit(X, y)
     
-    # 未来予測
     preds = []
     current_seq = scaled[-window:].flatten()
     for _ in range(steps):
         p = model.predict([current_seq])[0]
         preds.append(p)
         current_seq = np.append(current_seq[1:], p)
-    
-    # スケールを元に戻す
+        
     forecast = scaler.inverse_transform(np.array(preds).reshape(-1, 1))
     future_index = pd.date_range(start=df.index[-1] + pd.Timedelta(days=1), periods=steps, freq="D")
     return pd.DataFrame({"Forecast": forecast.flatten()}, index=future_index)
 
-# --- メイン UI ---
-st.title("📈 株価分析＆AI予測システム")
+# ==========================================
+# メインUI
+# ==========================================
+st.title("📈 株価予測・分析ツール")
 
-tab1, tab2 = st.tabs(["日経225一括分析", "個別銘柄AI予測"])
+tab1, tab2 = st.tabs(["日経225一括分析表示", "個別銘柄AI詳細予測"])
 
-# --- Tab 1: 日経225一括分析（幾何平均） ---
+# --- Tab 1: 日経225一括分析（表示のみ） ---
 with tab1:
-    st.header("日経225 幾何平均シミュレーション")
+    st.header("日経225 銘柄別予測一覧")
     CSV_FILE = "Nikkei225.csv"
 
     if os.path.exists(CSV_FILE):
-        if st.button("一括計算を開始"):
+        if st.button("全銘柄の計算を実行"):
             df_base = pd.read_csv(CSV_FILE)
             ticker_col = df_base.columns[0]
             tickers = [f"{str(num)}.T" for num in df_base[ticker_col]]
+
+            # 結果格納用
+            results_list = []
             
-            results = []
             progress_bar = st.progress(0)
             status_text = st.empty()
-            now = datetime.datetime.now()
+            current_date = datetime.datetime.now()
 
-            for idx, t in enumerate(tickers):
+            for idx, ticker in enumerate(tickers):
                 progress_bar.progress((idx + 1) / len(tickers))
-                status_text.text(f"処理中: {t}")
+                status_text.text(f"計算中... ({idx + 1}/{len(tickers)}): {ticker}")
                 
-                data = get_stock_raw_data(t, now)
-                if data is not None and len(data) > 10:
-                    p_start = float(data.iloc[0])
-                    p_end = float(data.iloc[-1])
-                    g_mean = np.sqrt(p_start * p_end)
-                    exp_price = p_end + (p_end - g_mean)
-                    results.append({
-                        "コード": t,
-                        "現在価格": round(p_end, 1),
-                        "1年後想定": round(exp_price, 1),
-                        "想定倍率": round(exp_price / p_end, 3)
-                    })
-            
+                res = get_stock_data_stats(ticker, current_date)
+                if res:
+                    # 元のCSV情報と計算結果を結合
+                    row_data = df_base.iloc[idx].to_dict()
+                    row_data.update(res)
+                    results_list.append(row_data)
+
             status_text.empty()
             progress_bar.empty()
-            st.dataframe(pd.DataFrame(results).sort_values("想定倍率", ascending=False), height=500)
-    else:
-        st.error(f"{CSV_FILE} が見つかりません。")
 
-# --- Tab 2: 個別銘柄AI予測（ニューラルネット） ---
-with tab2:
-    st.header("AI (ニューラルネットワーク) 詳細予測")
-    
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        target_ticker = st.text_input("銘柄コードを入力してください (例: 7203.T, 4974.T)", "4974.T")
-        predict_button = st.button("AI予測を実行")
-
-    if predict_button:
-        with st.spinner("AIモデルを生成・学習中..."):
-            now = datetime.datetime.now()
-            df = get_stock_raw_data(target_ticker, now)
+            # データフレーム化して表示
+            results_df = pd.DataFrame(results_list)
             
-            if df is not None and len(df) > 50:
-                # 予測実行
+            st.subheader("📊 予測結果ランキング（想定倍率順）")
+            # 想定倍率で降順ソートして表示
+            st.dataframe(
+                results_df.sort_values(by="想定倍率", ascending=False), 
+                height=600, 
+                use_container_width=True
+            )
+    else:
+        st.error(f"エラー: `{CSV_FILE}` が見つかりません。")
+
+# --- Tab 2: 個別銘柄AI予測 ---
+with tab2:
+    st.header("AI（ニューラルネット）詳細チャート")
+    ticker_input = st.text_input("銘柄コードを入力 (例: 7203.T)", value="4974.T")
+    
+    if st.button("AI予測チャートを表示"):
+        with st.spinner('AIが学習・分析中...'):
+            current_date = datetime.datetime.now()
+            df = get_stock_raw_data(ticker_input, current_date)
+            
+            if not df.empty:
                 forecast_df = forecast_mlp(df)
                 
-                # 指標計算
-                today_p = df.iloc[-1, 0]
-                fut_p = forecast_df["Forecast"].iloc[19] # 20ステップ後≒1ヶ月
-                change_rate = (fut_p - today_p) / today_p * 100
-                
-                # 統計の表示
-                c1, c2, c3 = st.columns(3)
-                c1.metric("現在株価", f"{today_p:,.1f}円")
-                c2.metric("1ヶ月後予測", f"{fut_p:,.1f}円")
-                c3.metric("予測騰落率", f"{change_rate:+.2f}%")
+                today_price = float(df.iloc[-1, 0])
+                future_price = float(forecast_df["Forecast"].iloc[19]) 
+                future_change = (future_price - today_price) / today_price * 100
 
-                # グラフ作成
-                st.subheader("予測チャート")
-                fig, ax = plt.subplots(figsize=(12, 5))
-                ax.plot(df.index, df.iloc[:, 0], label="Actual (実績)", color="royalblue")
-                ax.plot(forecast_df.index, forecast_df["Forecast"], label="Forecast (AI予測)", color="orange", linestyle="--")
-                ax.set_title(f"{target_ticker} - AI Prediction Model")
-                ax.grid(True, alpha=0.3)
+                # 指標をタイル表示
+                c1, c2, c3 = st.columns(3)
+                c1.metric("現在の株価", f"{today_price:,.1f}円")
+                c2.metric("1ヶ月後予測価格", f"{future_price:,.1f}円")
+                c3.metric("予測騰落率", f"{future_change:+.2f}%")
+
+                # グラフ（日本語対応）
+                st.subheader(f"【{ticker_input}】 実績とAI予測の推移")
+                fig, ax = plt.subplots(figsize=(10, 4.5))
+                ax.plot(df.index, df.iloc[:, 0], label="実績株価", color="#1f77b4", linewidth=2)
+                ax.plot(forecast_df.index, forecast_df["Forecast"], label="AI予測値", color="#ff7f0e", linestyle="--", linewidth=2)
+                
+                ax.set_xlabel("日付")
+                ax.set_ylabel("株価 (円)")
                 ax.legend()
+                ax.grid(True, alpha=0.3)
                 st.pyplot(fig)
             else:
-                st.error("データの取得に失敗したか、データ量が不足しています。")
+                st.error("データを取得できませんでした。コードが正しいか確認してください。")

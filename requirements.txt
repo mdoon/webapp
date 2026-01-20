@@ -1,6 +1,7 @@
 streamlit
 yfinance
-pandas
 numpy
+pandas
 scikit-learn
 matplotlib
+japanize-matplotlib
